@@ -242,12 +242,15 @@ uint32_t count_number_(const vector<Token> &stream, uint32_t c = 0) {
   uint32_t d = count_auto(stream);
   if (stream[i].type == Token::LPAREN) {
     i++;
-    return count_number_(stream, c * 10 + d);
+    uint32_t r = count_number_(stream, c * 10 + d);
+    if(stream[i].type == Token::RPAREN)++i;
+    return r;
   } else if (stream[i].type == Token::RPAREN) {
     i++;
     return c * 10 + d;
-  } else
+  } else{
     return c * 10 + d;
+  }
 }
 
 uint32_t count_number(const vector<Token> &stream) {
@@ -259,6 +262,7 @@ uint32_t count_number(const vector<Token> &stream) {
   if (stream[i].type != Token::GT) {
     c = count_number_(stream);
   }
+  while(stream[i].type != Token::GT)++i;
   ++i;
   return c;
 }
@@ -295,8 +299,10 @@ void parse(vector<Token> stream) {
     } else if (stream[i].type == Token::RBRACE) {
       i++;
       instr_stream[id++] = instr{instr::GOTO};
-    } else
+    } else{
+      printf("%d\n", stream[i].type);
       abort();
+    }
   }
 }
 
