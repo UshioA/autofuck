@@ -1,8 +1,10 @@
+#include <cstdio>
 #include <exception>
 #include <iostream>
 #include <map>
 #include <ostream>
 #include <set>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +20,13 @@ uint32_t stackptr;
 uint32_t flag_ptr;
 
 uint32_t preg;
+bool debug = 0;
+
+#define log(format, ...)                                                       \
+  do {                                                                         \
+    if (debug)                                                                 \
+      printf("\033[35m[VM]: \033[34m" format "\033[0m\n", ##__VA_ARGS__);      \
+  } while (0)
 
 class Token {
 public:
@@ -32,6 +41,7 @@ public:
     GT,
     LARROW,
     LWORRA,
+    SEMI,
     END,
   };
 
@@ -103,7 +113,10 @@ public:
     return Token(Token::DOUBLECOLON, res);
   }
   bool end() { return current_char == LEX_END; }
-  void error() { abort(); };
+  void error() {
+    log("Lexer Error at %d", pos);
+    abort();
+  };
   Token next_token() {
     while (current_char != LEX_END) {
       if (current_char == 'a') {
@@ -140,6 +153,7 @@ private:
       {'>', Token(Token::GT)},     {'<', Token(Token::LT)},
       {'{', Token(Token::LBRACE)}, {'}', Token(Token::RBRACE)},
       {'(', Token(Token::LPAREN)}, {')', Token(Token::RPAREN)},
+      {';', Token(Token::SEMI)},
   };
   string text;
 };
@@ -155,6 +169,7 @@ struct instr {
     LOAD,
     BUILDFLAG,
     GOTO,
+    SYSCALL,
   };
 
   instr_type type;
@@ -169,12 +184,12 @@ uint32_t id;
 
 uint32_t do_push() {
   pstack[stackptr++] = preg;
-  cout << "Push " << preg << endl;
+  log("Push");
   return 1;
 }
 uint32_t do_pop() {
   preg = pstack[--stackptr];
-  cout << "Pop " << preg << endl;
+  log("Pop");
   return 1;
 }
 int do_binop(int type) {
@@ -182,19 +197,19 @@ int do_binop(int type) {
   switch (instr::instr_type(type)) {
   case instr::ADD: {
     pstack[stackptr - 1] += preg;
-    cout << "Plus" << endl;
+    log("Add");
   } break;
   case instr::MUL: {
     pstack[stackptr - 1] *= preg;
-    cout << "Mul" << endl;
+    log("Mul");
   } break;
   case instr::DIV: {
     pstack[stackptr - 1] /= preg;
-    cout << "Div" << endl;
+    log("Div");
   } break;
   case instr::MINUS: {
     pstack[stackptr - 1] -= preg;
-    cout << "Minus" << endl;
+    log("Minus");
   } break;
   default:
     abort();
@@ -203,22 +218,61 @@ int do_binop(int type) {
 }
 int do_load(uint32_t num) {
   preg = num;
-  cout << "load " << num << endl;
+  log("load %u", num);
   return 1;
 }
 int do_setflag() {
   flag_stack[flag_ptr++] = id;
-  cout << "setflag" << endl;
+  log("setflag");
   return 1;
 }
 int do_goto() {
   if (preg) {
     id = flag_stack[--flag_ptr];
-    cout << "goto " << id << endl;
+    log("goto %u", id);
     return 0;
   }
   return 1;
 }
+
+int do_syscall() {
+  switch ((int)preg) {
+  case -1: {
+    exit(preg);
+  } break;
+  case 0: {
+    log("print %c", pstack[stackptr - 1]);
+    printf("%c\n", pstack[stackptr - 1]);
+    fflush(stdout);
+  } break;
+  case 1: {
+    log("expect an unsigned");
+    scanf(" %u", &preg);
+    fflush(stdin);
+  } break;
+  case 2: {
+    char c;
+    log("expect a char");
+    scanf(" %c", &c);
+    fflush(stdin);
+    preg = c;
+  } break;
+  case 3: {
+    int i;
+    log("expect an integer");
+    scanf(" %d", &i);
+    fflush(stdin);
+    preg = i;
+  } break;
+  case 4: {
+    id = 0;
+    log("reset");
+    return 0;
+  }
+  }
+  return 1;
+}
+
 int i = 0;
 
 uint32_t count_auto(const vector<Token> &stream) {
@@ -243,12 +297,13 @@ uint32_t count_number_(const vector<Token> &stream, uint32_t c = 0) {
   if (stream[i].type == Token::LPAREN) {
     i++;
     uint32_t r = count_number_(stream, c * 10 + d);
-    if(stream[i].type == Token::RPAREN)++i;
+    if (stream[i].type == Token::RPAREN)
+      ++i;
     return r;
   } else if (stream[i].type == Token::RPAREN) {
     i++;
     return c * 10 + d;
-  } else{
+  } else {
     return c * 10 + d;
   }
 }
@@ -262,7 +317,8 @@ uint32_t count_number(const vector<Token> &stream) {
   if (stream[i].type != Token::GT) {
     c = count_number_(stream);
   }
-  while(stream[i].type != Token::GT)++i;
+  while (stream[i].type != Token::GT)
+    ++i;
   ++i;
   return c;
 }
@@ -289,7 +345,7 @@ void parse(vector<Token> stream) {
         i += 2;
         instr_stream[id++] = instr{instr::POP};
       } else {
-        puts("nmsl");
+        log("Parser Error");
         abort();
       }
     } else if (stream[i].type == Token::LBRACE) {
@@ -299,8 +355,11 @@ void parse(vector<Token> stream) {
     } else if (stream[i].type == Token::RBRACE) {
       i++;
       instr_stream[id++] = instr{instr::GOTO};
-    } else{
-      printf("%d\n", stream[i].type);
+    } else if (stream[i].type == Token::SEMI) {
+      ++i;
+      instr_stream[id++] = instr{instr::SYSCALL};
+    } else {
+      log("Parser Error");
       abort();
     }
   }
@@ -329,12 +388,19 @@ void one_step() {
   case instr::MINUS:
     id += do_binop(instr_stream[id].type);
     break;
+  case instr::SYSCALL: {
+    id += do_syscall();
+    break;
+  }
   }
 }
 
-int main() {
+int main(int argc, char **argv) {
+  if (argc > 1)
+    debug = 1;
   string a;
   while (cin >> a) {
+    getchar();
     id = 0;
     i = 0;
     Lexer l(a);
